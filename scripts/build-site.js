@@ -1,0 +1,18 @@
+import { readFile, writeFile, mkdir, rm, cp } from 'node:fs/promises';
+import { publicFiles } from './public-files.js';
+import './prepare-assets.js';
+const hosting=JSON.parse(await readFile('.openai/hosting.json','utf8'));
+if(!hosting.project_id||hosting.d1!=='DB')throw new Error('Missing Sites identity or D1 binding.');
+const assets={};
+for(const [path,[file,type]] of publicFiles) assets[path]={type,body:(await readFile(file)).toString('base64')};
+const handler=await readFile('worker/handler.js','utf8');
+await rm('dist',{recursive:true,force:true});
+await mkdir('dist/server',{recursive:true});await mkdir('dist/.openai',{recursive:true});
+await writeFile('dist/server/index.js',handler+'\nexport default createWorker('+JSON.stringify(assets)+');\n');
+await cp('.openai/hosting.json','dist/.openai/hosting.json');
+await cp('drizzle','dist/.openai/drizzle',{recursive:true});
+const {default:worker}=await import('../dist/server/index.js?build='+Date.now());
+if(typeof worker.fetch!=='function')throw new Error('Invalid Worker export.');
+const check=await worker.fetch(new Request('https://portfolio.example/'),{},{});
+if(check.status!==200||!(await check.text()).includes('THE SYSTEMS'))throw new Error('Worker homepage verification failed.');
+console.log('Built and verified Sites Worker with '+publicFiles.size+' public routes, D1 migrations, and no private data.');
